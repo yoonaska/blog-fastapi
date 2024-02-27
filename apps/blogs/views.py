@@ -4,14 +4,13 @@ from database import get_db
 from apps.blogs import schemas, models
 from helpers.response import ResponseHandler
 from sqlalchemy.exc import SQLAlchemyError
-
+from typing import Optional
 
 
 class BlogView(ResponseHandler):
     def __init__(self):
         super().__init__()  # Initialize the parent ResponseHandler class
         self.router = APIRouter()  # Create a router for this view
-        
         # Add routes to the router
         self._register_routes()
 
@@ -21,14 +20,24 @@ class BlogView(ResponseHandler):
         self.router.add_api_route("/blogs/{blog_id}", self.read_blog, methods=["GET"], tags=["Blogs"])
         self.router.add_api_route("/blogs", self.create_or_update_blog, methods=["POST"], tags=["Blogs"])
 
-    async def read_blogs(self, db: Session = Depends(get_db)):
-        """Endpoint to retrieve all blogs."""
+    async def read_blogs(self, db: Session = Depends(get_db), blog_id: Optional[int] = None, title: Optional[str] = None):
+        """Endpoint to retrieve all blogs or filter by id and/or title."""
         try:
-            blogs = db.query(models.Blog).all()
+            query = db.query(models.Blog)
+            
+            if blog_id is not None:
+                query = query.filter(models.Blog.id == blog_id)
+            
+            if title is not None:
+                query = query.filter(models.Blog.title.contains(title))
+            
+            blogs = query.all()
             return self.response_info(message="Blogs fetched successfully", data=blogs)
+            
         except Exception as e:
             return self.response_info(status=False, status_code=500, message="An error occurred", errors=str(e))
-
+        
+        
     async def read_blog(self, blog_id: int, db: Session = Depends(get_db)):
         """Endpoint to retrieve a single blog by ID."""
         try:
