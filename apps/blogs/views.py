@@ -11,6 +11,7 @@ class BlogView(ResponseHandler):
     def __init__(self):
         super().__init__()  # Initialize the parent ResponseHandler class
         self.router = APIRouter()  # Create a router for this view
+
         # Add routes to the router
         self._register_routes()
 
@@ -18,7 +19,8 @@ class BlogView(ResponseHandler):
         """Private method to add API routes."""
         self.router.add_api_route("/blogs", self.read_blogs, methods=["GET"], tags=["Blogs"])
         self.router.add_api_route("/blogs/{blog_id}", self.read_blog, methods=["GET"], tags=["Blogs"])
-        self.router.add_api_route("/blogs", self.create_or_update_blog, methods=["POST"], tags=["Blogs"])
+        self.router.add_api_route("/create-or-update", self.create_or_update_blog, methods=["POST"], tags=["Blogs"])
+        self.router.add_api_route("/delete-blogs/{blog_id}", self.delete_blog, methods=["DELETE"], tags=["Blogs"])  # Register the delete endpoint
 
     async def read_blogs(self, db: Session = Depends(get_db), blog_id: Optional[int] = None, title: Optional[str] = None):
         """Endpoint to retrieve all blogs or filter by id and/or title."""
@@ -76,3 +78,19 @@ class BlogView(ResponseHandler):
             db.rollback()
             # Handle specific database errors if necessary
             return self.response_info(status=False, status_code=500,message="Something went wrong", errors=str(e))
+
+
+    async def delete_blog(self, blog_id: int, db: Session = Depends(get_db)):
+            """Endpoint to delete a blog by ID."""
+            try:
+                blog = db.query(models.Blog).filter(models.Blog.id == blog_id).first()
+                if not blog:
+                    return self.response_info(status=False, status_code=404, message="Blog not found")
+                
+                db.delete(blog)
+                db.commit()
+                return self.response_info(status=True, status_code=200, message="Blog deleted successfully")
+            
+            except SQLAlchemyError as e:
+                db.rollback()
+                return self.response_info(status=False, status_code=500, message="Something went wrong", errors=str(e))
