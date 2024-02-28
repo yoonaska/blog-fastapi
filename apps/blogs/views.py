@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from apps.blogs import schemas, models
+from apps.blogs.models import Blog
 from helpers.response import ResponseHandler
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional
@@ -18,20 +19,20 @@ class BlogView(ResponseHandler):
     def _register_routes(self):
         """Private method to add API routes."""
         self.router.add_api_route("/blogs", self.read_blogs, methods=["GET"], tags=["Blogs"])
-        self.router.add_api_route("/blogs/{blog_id}", self.read_blog, methods=["GET"], tags=["Blogs"])
+        self.router.add_api_route("/blogs-paginated-view", self.get_all_blogs, methods=["GET"], tags=["Blogs"])
         self.router.add_api_route("/create-or-update", self.create_or_update_blog, methods=["POST"], tags=["Blogs"])
         self.router.add_api_route("/delete-blogs/{blog_id}", self.delete_blog, methods=["DELETE"], tags=["Blogs"])  # Register the delete endpoint
 
     async def read_blogs(self, db: Session = Depends(get_db), blog_id: Optional[int] = None, title: Optional[str] = None):
         """Endpoint to retrieve all blogs or filter by id and/or title."""
         try:
-            query = db.query(models.Blog)
+            query = db.query(Blog)
             
             if blog_id is not None:
-                query = query.filter(models.Blog.id == blog_id)
+                query = query.filter(Blog.id == blog_id)
             
             if title is not None:
-                query = query.filter(models.Blog.title.contains(title))
+                query = query.filter(Blog.title.contains(title))
             
             blogs = query.all()
             return self.response_info(message="Blogs fetched successfully", data=blogs)
@@ -40,21 +41,39 @@ class BlogView(ResponseHandler):
             return self.response_info(status=False, status_code=500, message="An error occurred", errors=str(e))
         
         
-    async def read_blog(self, blog_id: int, db: Session = Depends(get_db)):
-        """Endpoint to retrieve a single blog by ID."""
+    async def get_all_blogs(self, db: Session = Depends(get_db), page: Optional[int] = 1, page_size: Optional[int] = 10):
+        """Endpoint to retrieve all blogs with pagination."""
         try:
-            blog = db.query(models.Blog).filter(models.Blog.id == blog_id).first()
-            if not blog:
-                return self.response_info(status=False, status_code=404, message="Blog not found")
-            return self.response_info(message="Blog fetched successfully", data=blog)
+            # Calculate offset
+            offset = (page - 1) * page_size
+            
+            # Fetch paginated blogs
+            blogs_query = db.query(Blog).offset(offset).limit(page_size)
+            blogs = blogs_query.all()
+
+            # Optionally, calculate total number of records and total pages
+            total_records = db.query(Blog).count()
+            total_pages = (total_records // page_size) + (0 if total_records % page_size == 0 else 1)
+
+            # Prepare the paginated response
+            paginated_response = {
+                "data": blogs,
+                "total_records": total_records,
+                "total_pages": total_pages,
+                "current_page": page,
+                "page_size": page_size
+            }
+
+            return self.response_info(message="Blogs fetched successfully", data=paginated_response)
+        
         except Exception as e:
             return self.response_info(status=False, status_code=500, message="An error occurred", errors=str(e))
 
-
+        
     async def create_or_update_blog(self,blog: schemas.BlogCreate, db: Session = Depends(get_db)):
         try:
             if blog.instance_id is not None:
-                instance = db.query(models.Blog).filter(models.Blog.id == blog.instance_id).first()
+                instance = db.query(Blog).filter(Blog.id == blog.instance_id).first()
                 if instance:
                     instance.title = blog.title
                     instance.content = blog.content
@@ -83,7 +102,8 @@ class BlogView(ResponseHandler):
     async def delete_blog(self, blog_id: int, db: Session = Depends(get_db)):
             """Endpoint to delete a blog by ID."""
             try:
-                blog = db.query(models.Blog).filter(models.Blog.id == blog_id).first()
+                blog = db.query(Blog).filter(Blog.id == blog_id).first()
+                
                 if not blog:
                     return self.response_info(status=False, status_code=404, message="Blog not found")
                 
@@ -94,3 +114,5 @@ class BlogView(ResponseHandler):
             except SQLAlchemyError as e:
                 db.rollback()
                 return self.response_info(status=False, status_code=500, message="Something went wrong", errors=str(e))
+
+
