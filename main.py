@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from apps.blogs.views import BlogView
+from apps.blogs.views import CreateOrUpdateBlogView, DeleteBlogView, GetBlogsPaginatedView, GetBlogsApiView
 from database import engine, Base
 
 
@@ -12,5 +12,8 @@ app = FastAPI(
 
 Base.metadata.create_all(bind=engine)
 
-blog_view = BlogView()
-app.include_router(blog_view.router, prefix="/api/v1")
+# Register routers
+app.include_router(GetBlogsApiView().router, prefix="/get-blogs")
+app.include_router(GetBlogsPaginatedView().router, prefix="/get-blogs")
+app.include_router(CreateOrUpdateBlogView().router, prefix="/create-or-update-blog")
+app.include_router(DeleteBlogView().router, prefix="/delete-blog")
