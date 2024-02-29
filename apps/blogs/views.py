@@ -8,20 +8,50 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional
 
 
-class BlogView(ResponseHandler):
+class BaseView(ResponseHandler):
     def __init__(self):
-        super().__init__()  # Initialize the parent ResponseHandler class
-        self.router = APIRouter()  # Create a router for this view
+        self.router = APIRouter()
 
-        # Add routes to the router
-        self._register_routes()
 
-    def _register_routes(self):
-        """Private method to add API routes."""
-        self.router.add_api_route("/blogs", self.read_blogs, methods=["GET"], tags=["Blogs"])
-        self.router.add_api_route("/blogs-paginated-view", self.get_all_blogs, methods=["GET"], tags=["Blogs"])
-        self.router.add_api_route("/create-or-update", self.create_or_update_blog, methods=["POST"], tags=["Blogs"])
-        self.router.add_api_route("/delete-blogs/{blog_id}", self.delete_blog, methods=["DELETE"], tags=["Blogs"])  # Register the delete endpoint
+class GetBlogsPaginatedView(BaseView):
+    def __init__(self):
+        super().__init__()
+        self.router.add_api_route("/paginated-listing", self.get_all_blogs, methods=["GET"], tags=["Blogs"])
+
+    #Paginated Resoponce 
+    async def get_all_blogs(self, db: Session = Depends(get_db), page: Optional[int] = 1, page_size: Optional[int] = 10):
+            """Endpoint to retrieve all blogs with pagination."""
+            try:
+                # Calculate offset
+                offset = (page - 1) * page_size
+                
+                # Fetch paginated blogs
+                blogs_query = db.query(Blog).offset(offset).limit(page_size)
+                blogs = blogs_query.all()
+
+                # Optionally, calculate total number of records and total pages
+                total_records = db.query(Blog).count()
+                total_pages = (total_records // page_size) + (0 if total_records % page_size == 0 else 1)
+
+                # Prepare the paginated response
+                paginated_response = {
+                    "data": blogs,
+                    "total_records": total_records,
+                    "total_pages": total_pages,
+                    "current_page": page,
+                    "page_size": page_size
+                }
+
+                return self.response_info(message="Blogs fetched successfully", data=paginated_response)
+            
+            except Exception as e:
+                return self.response_info(status=False, status_code=500, message="An error occurred", errors=str(e))
+
+
+class GetBlogsApiView(BaseView):
+    def __init__(self):
+        super().__init__()
+        self.router.add_api_route("/", self.read_blogs, methods=["GET"], tags=["Blogs"])
 
     async def read_blogs(self, db: Session = Depends(get_db), blog_id: Optional[int] = None, title: Optional[str] = None):
         """Endpoint to retrieve all blogs or filter by id and/or title."""
@@ -41,63 +71,50 @@ class BlogView(ResponseHandler):
             return self.response_info(status=False, status_code=500, message="An error occurred", errors=str(e))
         
         
-    async def get_all_blogs(self, db: Session = Depends(get_db), page: Optional[int] = 1, page_size: Optional[int] = 10):
-        """Endpoint to retrieve all blogs with pagination."""
-        try:
-            # Calculate offset
-            offset = (page - 1) * page_size
-            
-            # Fetch paginated blogs
-            blogs_query = db.query(Blog).offset(offset).limit(page_size)
-            blogs = blogs_query.all()
+# Create Or Update
+class CreateOrUpdateBlogView(ResponseHandler):
+    def __init__(self):
+        super().__init__()
+        self.router = APIRouter()
+        self.router.add_api_route("/", self.create_or_update_blog, methods=["POST"], tags=["Blogs"])
 
-            # Optionally, calculate total number of records and total pages
-            total_records = db.query(Blog).count()
-            total_pages = (total_records // page_size) + (0 if total_records % page_size == 0 else 1)
+    async def create_or_update_blog(self, blog: schemas.BlogCreate, db: Session = Depends(get_db)) :
+        if blog.instance_id:
+            return await self._update_blog(blog, db)
+        else:
+            return await self._create_blog(blog, db)
 
-            # Prepare the paginated response
-            paginated_response = {
-                "data": blogs,
-                "total_records": total_records,
-                "total_pages": total_pages,
-                "current_page": page,
-                "page_size": page_size
-            }
-
-            return self.response_info(message="Blogs fetched successfully", data=paginated_response)
+    async def _update_blog(self, blog: schemas.BlogCreate, db: Session) :
+        instance = db.query(models.Blog).filter(models.Blog.id == blog.instance_id).first()
+        if not instance:
+            return self.response_info(status=False, status_code=404, message="Blog not found")
         
-        except Exception as e:
-            return self.response_info(status=False, status_code=500, message="An error occurred", errors=str(e))
-
-        
-    async def create_or_update_blog(self,blog: schemas.BlogCreate, db: Session = Depends(get_db)):
+        instance.title = blog.title
+        instance.content = blog.content
         try:
-            if blog.instance_id is not None:
-                instance = db.query(Blog).filter(Blog.id == blog.instance_id).first()
-                if instance:
-                    instance.title = blog.title
-                    instance.content = blog.content
-                    db.commit()
-                    db.refresh(instance)
-                    return self.response_info(status=True, status_code=201,message="Blog Updated successfully", data=instance)
-                else:
-                    # If instance_id is provided but instance is not found, return an error
-                    return self.response_info(status=False, status_code=404,message="Blog not found")
-            else:
-                # Create a new blog
-                instance = models.Blog()
-                instance.title = blog.title
-                instance.content = blog.content
-                db.add(instance)
-                db.commit()
-                db.refresh(instance)
-                return self.response_info(status=True, status_code=201,message="Blog created successfully", data=instance)
-            
+            db.commit()
+            db.refresh(instance)
+            return self.response_info(status=True, status_code=200, message="Success", data=instance)
         except SQLAlchemyError as e:
             db.rollback()
-            # Handle specific database errors if necessary
-            return self.response_info(status=False, status_code=500,message="Something went wrong", errors=str(e))
+            return self.response_info(status=False, status_code=500, message="Something went wrong", errors=str(e))
 
+    async def _create_blog(self, blog: schemas.BlogCreate, db: Session) :
+        new_blog = models.Blog(title=blog.title, content=blog.content)
+        try:
+            db.add(new_blog)
+            db.commit()
+            db.refresh(new_blog)
+            return self.response_info(status=True, status_code=201, message="Success", data=new_blog)
+        except SQLAlchemyError as e:
+            db.rollback()
+            return self.response_info(status=False, status_code=500, message="Something went wrong", errors=str(e))
+
+# Delete Blog
+class DeleteBlogView(BaseView):
+    def __init__(self):
+        super().__init__()
+        self.router.add_api_route("/{blog_id}", self.delete_blog, methods=["DELETE"], tags=["Blogs"])
 
     async def delete_blog(self, blog_id: int, db: Session = Depends(get_db)):
             """Endpoint to delete a blog by ID."""
@@ -109,10 +126,12 @@ class BlogView(ResponseHandler):
                 
                 db.delete(blog)
                 db.commit()
-                return self.response_info(status=True, status_code=200, message="Blog deleted successfully")
+                return self.response_info(status=True, status_code=200, message="Success")
             
             except SQLAlchemyError as e:
                 db.rollback()
                 return self.response_info(status=False, status_code=500, message="Something went wrong", errors=str(e))
+
+
 
 
